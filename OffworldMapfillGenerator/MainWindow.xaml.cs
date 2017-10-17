@@ -51,7 +51,16 @@ namespace OffworldMapfillGenerator
         private void SelectTerrain(object sender, RoutedEventArgs e)
         {
             selector.Owner = this;
+            IsEnabled = false;
+
+            selector.Closing += Selector_Closing;
+
             selector.Show();
+        }
+
+        private void Selector_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            IsEnabled = true;
         }
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)

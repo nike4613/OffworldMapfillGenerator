@@ -32,15 +32,113 @@ namespace OffworldMapfillGenerator
             "MapName", "UsesTypes", "MapWidth", "MapLength", "MapEdgeTilePadding", "MapClass", "MapSizeType", "RequiredMod", "LocationType", "HasResourceInfo", "MapLatitude"
         };
 
+        private class GenerationPropertyStruct
+        {
+            public string MapName = "";
+            public bool UsesTypes = false;
+            public int MapWidth = 0;
+            public int MapLength = 0;
+            public int MapEdgeTilePadding = 0;
+            public string MapClass = "";
+            public string MapSizeType = "";
+            public string RequiredMod = "";
+            public string LocationType = "";
+            public bool HasResourceInfo = false;
+            public int MapLatitude = 0;
+
+            public string tileToGenerate = "";
+            public bool randomizeTiles = false;
+            public HashSet<string> tilesToGenerate = new HashSet<string>();
+
+            public string iceToGenerate = "";
+            public bool randomizeIce = false;
+            public HashSet<string> icesToGenerate = new HashSet<string>();
+        }
+
         private Thread Thread;
 
         public event Action OnGenerateComplete = new Action(()=> { });
         public event Action OnGenerateClose = new Action(() => { });
 
+        private string targetFilename = "map.map";
+
         private int TileGenerationCount = 0;
+
+        private GenerationPropertyStruct props;
+
+        private void LoadProps(MainWindow window)
+        {
+            props = new GenerationPropertyStruct();
+
+            Type owntype = typeof(MainWindow);
+            Type tgttype = typeof(GenerationPropertyStruct);
+
+            foreach (var compn in DIRECT_COMPONENTS)
+            {
+                var field = owntype.GetField(compn, BindingFlags.NonPublic | BindingFlags.Instance);
+                var field2 = tgttype.GetField(compn, BindingFlags.Public | BindingFlags.Instance);
+                var membr = owntype.InvokeMember(field.Name, BindingFlags.GetField | BindingFlags.NonPublic | BindingFlags.Instance, null, window, new object[] { });
+
+                if (membr.GetType() == typeof(TextBox))
+                {
+                    TextBox box = (TextBox)membr;
+
+                    string boxval = box.Text;
+                    object value = boxval;
+
+                    if (field2.FieldType == typeof(int)) value = int.Parse(boxval); 
+
+                    field2.SetValue(props, value);
+                }
+                if (membr.GetType() == typeof(ComboBox))
+                {
+                    ComboBox box = (ComboBox)membr;
+                    ComboBoxItem item = (ComboBoxItem)box.SelectedItem;
+                    string value = item.Name;
+
+                    field2.SetValue(props, value);
+                }
+                if (membr.GetType() == typeof(CheckBox))
+                {
+                    CheckBox box = (CheckBox)membr;
+                    bool? isChecked = box.IsChecked;
+
+                    field2.SetValue(props, isChecked.GetValueOrDefault());
+                }
+            }
+
+            props.randomizeTiles = window.selector.randomizeTiles.IsChecked.GetValueOrDefault();
+            props.randomizeIce = window.selector.randomizeIce.IsChecked.GetValueOrDefault();
+
+            props.tileToGenerate = ((ComboBoxItem)window.selector.tileToGenerate.SelectedItem).Name.Replace("cmbx_","");
+            props.iceToGenerate = ((ComboBoxItem)window.selector.iceToGenerate.SelectedItem).Name.Replace("cmbx_", "");
+
+            Type selector = typeof(TerrainSelector);
+
+            var fields = selector.GetFields(BindingFlags.Instance | BindingFlags.NonPublic);
+
+            foreach (var field in fields)
+            {
+                if (!field.Name.Contains("use_")) continue;
+
+                if (!((CheckBox)field.GetValue(window.selector)).IsChecked.GetValueOrDefault()) continue;
+
+                string name = field.Name.Replace("use_", "");
+
+                if (name.Contains("ICE"))
+                { // Ice
+                    props.icesToGenerate.Add(name);
+                } else
+                { // Terrain
+                    props.tilesToGenerate.Add(name);
+                }
+            }
+        }
 
         public Thread Generate(MainWindow window)
         {
+            LoadProps(window);
+
             int mapw = int.Parse(window.MapWidth.Text);
             int maph = int.Parse(window.MapLength.Text);
             int border = int.Parse(window.MapEdgeTilePadding.Text);
@@ -54,7 +152,7 @@ namespace OffworldMapfillGenerator
             Progress.Value = 0;
 
             var thread = new Thread(() => {
-                GenerateThread(window);
+                GenerateThread();
                 Dispatcher.Invoke(new Action(() => {
                     Progress.IsIndeterminate = true;
                     OnGenerateComplete();
@@ -62,6 +160,24 @@ namespace OffworldMapfillGenerator
                 }));
             });
 
+            Microsoft.Win32.SaveFileDialog dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = String.Concat(props.MapName.Split(System.IO.Path.GetInvalidFileNameChars())), // Default file name
+                DefaultExt = ".map", // Default file extension
+                Filter = "Offworld Custom Map Files|*.map" // Filter files by extension
+            };
+
+            // Show save file dialog box
+            bool? result = dlg.ShowDialog();
+
+            // Process save file dialog box results
+            if (result == true)
+            {
+                // Save document
+                targetFilename = dlg.FileName;
+            }
+            else return null;
+            
             thread.Start();
 
             Thread = thread;
@@ -74,35 +190,7 @@ namespace OffworldMapfillGenerator
             Dispatcher.InvokeAsync(new Action(() => { Progress.Value += amount; }));
         }
 
-        private T SafeGetProperty<T>(UIElement o, string name)
-        {
-            T outp = default(T);
-
-            Dispatcher.Invoke(new Action(() =>
-            {
-                Type t = o.GetType();
-                var prop = t.GetProperty(name);
-                outp = (T)t.InvokeMember(prop.Name, BindingFlags.GetProperty | BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public, null, o, new object[] { });
-            }));
-
-            return outp;
-        }
-
-        private T SafeGetField<T>(UIElement o, string name)
-        {
-            T outp = default(T);
-
-            Dispatcher.Invoke(new Action(() =>
-            {
-                Type t = o.GetType();
-                var prop = t.GetField(name, BindingFlags.GetField | BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                outp = (T)t.InvokeMember(prop.Name, BindingFlags.GetField | BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public, null, o, new object[] { });
-            }));
-
-            return outp;
-        }
-
-        private void GenerateThread(MainWindow window)
+        private void GenerateThread()
         {
             XmlDocument doc = new XmlDocument();
             doc.AppendChild(doc.CreateXmlDeclaration("1.0", "utf-8", ""));
@@ -110,33 +198,30 @@ namespace OffworldMapfillGenerator
             XmlElement root = (XmlElement)doc.AppendChild(doc.CreateElement("Root"));
             IncrementProgress();
 
-            Type owntype = typeof(MainWindow);
+            Type owntype = typeof(GenerationPropertyStruct);
 
             foreach (var compn in DIRECT_COMPONENTS)
             {
-                var field = owntype.GetField(compn, BindingFlags.NonPublic | BindingFlags.Instance);
+                var field = owntype.GetField(compn, BindingFlags.Public | BindingFlags.Instance);
 
-                var membr = owntype.InvokeMember(field.Name, BindingFlags.GetField | BindingFlags.NonPublic | BindingFlags.Instance, null, window, new object[] { });
+                var membr = owntype.InvokeMember(compn, BindingFlags.GetField | BindingFlags.Public | BindingFlags.Instance, null, props, new object[] { });
 
-                if (membr.GetType() == typeof(TextBox))
+                if (membr.GetType() == typeof(string))
                 {
-                    TextBox box = (TextBox)membr;
+                    string box = (string)membr;
 
-                    root.SetAttribute(compn, SafeGetProperty<string>(box, "Text"));
+                    root.SetAttribute(compn, box);
                 }
-                if (membr.GetType() == typeof(ComboBox))
+                if (membr.GetType() == typeof(int))
                 {
-                    ComboBox box = (ComboBox)membr;
-                    ComboBoxItem item = SafeGetProperty<ComboBoxItem>(box, "SelectedItem");
-                    string value = SafeGetProperty<string>(item, "Name");
+                    int box = (int)membr;
+                    string value = box.ToString();
 
                     root.SetAttribute(compn, value);
                 }
-                if (membr.GetType() == typeof(CheckBox))
+                if (membr.GetType() == typeof(bool))
                 {
-                    CheckBox box = (CheckBox)membr;
-                    bool? isChecked = SafeGetProperty<bool?>(box, "IsChecked");
-                    string value = isChecked.GetValueOrDefault() ? "True" : "False";
+                    string value = ((bool)membr) ? "True" : "False";
                     root.SetAttribute(compn, value);
                 }
 
@@ -144,6 +229,8 @@ namespace OffworldMapfillGenerator
             }
 
             Type terrsel = typeof(TerrainSelector);
+
+            Random rand = new Random();
 
             for (int i = 0; i < TileGenerationCount; i++)
             {
@@ -154,10 +241,11 @@ namespace OffworldMapfillGenerator
                 IncrementProgress();
 
                 XmlElement terrain = (XmlElement)tinfo.AppendChild(doc.CreateElement("Terrain"));
-                
-                ComboBox box = SafeGetField<ComboBox>(window.selector, "tileToGenerate");
-                ComboBoxItem item = SafeGetProperty<ComboBoxItem>(box, "SelectedItem");
-                terrain.InnerText = SafeGetProperty<string>(item, "Name").Replace("cmbx_","");
+
+                if (!props.randomizeTiles)
+                    terrain.InnerText = props.tileToGenerate;
+                else
+                    terrain.InnerText = props.tilesToGenerate.ElementAt(rand.Next(0, props.tilesToGenerate.Count));
                 IncrementProgress();
 
                 XmlElement height = (XmlElement)tinfo.AppendChild(doc.CreateElement("Height"));
@@ -167,17 +255,20 @@ namespace OffworldMapfillGenerator
                 height.InnerText = "HEIGHT_MEDIUM";
                 IncrementProgress();
 
-                ComboBox icebox = SafeGetField<ComboBox>(window.selector, "iceToGenerate");
-                ComboBoxItem iceitem = SafeGetProperty<ComboBoxItem>(icebox, "SelectedItem");
-                if (SafeGetProperty<string>(iceitem, "Name").Replace("cmbx_", "") != "NOICE")
+                string iceg = props.iceToGenerate;
+
+                if (props.randomizeIce)
+                    iceg = props.icesToGenerate.ElementAt(rand.Next(0, props.icesToGenerate.Count));
+
+                if (iceg != "NOICE")
                 {
                     XmlElement ice = (XmlElement)tinfo.AppendChild(doc.CreateElement("IceType"));
-                    ice.InnerText = SafeGetProperty<string>(iceitem, "Name").Replace("cmbx_", "");
+                    ice.InnerText = iceg;
                 }
                 IncrementProgress();
             }
 
-            XmlWriter writer = XmlWriter.Create("product.xml", new XmlWriterSettings() {
+            XmlWriter writer = XmlWriter.Create(targetFilename, new XmlWriterSettings() {
                 Indent = true,
                 IndentChars = "  ",
                 NewLineOnAttributes = true,
